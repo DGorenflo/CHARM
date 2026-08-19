@@ -25,15 +25,9 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.sap.ai.sdk.foundationmodels</groupId>
-            <artifactId>openai</artifactId>
-            <version>1.16.0</version>
-        </dependency>
-
-        <dependency>
-            <groupId>com.sap.ai.sdk</groupId>
-            <artifactId>orchestration</artifactId>
-            <version>1.16.0</version>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.17.2</version>
         </dependency>
 
         <dependency>

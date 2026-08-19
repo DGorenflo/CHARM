@@ -1,15 +1,5 @@
 package charm.bootstrap.semantics.pipeline;
 
-import com.sap.ai.sdk.foundationmodels.openai.OpenAiClient;
-import com.sap.ai.sdk.foundationmodels.openai.OpenAiChatCompletionRequest;
-import com.sap.ai.sdk.foundationmodels.openai.OpenAiModel;
-import com.sap.ai.sdk.orchestration.OrchestrationAiModel;
-import com.sap.ai.sdk.orchestration.OrchestrationClient;
-import com.sap.ai.sdk.orchestration.OrchestrationModuleConfig;
-import com.sap.ai.sdk.orchestration.OrchestrationPrompt;
-
-import java.math.BigDecimal;
-
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.jena.ontology.OntResource;
 
@@ -32,16 +22,10 @@ public class LlmDecider {
     private static final Logger LOG           = Logger.getLogger(LlmDecider.class.getName());
     private static final int    MAX_RETRIES   = 5;
     private static final int    BATCH_RETRIES = 3;
-    private static final int    RATE_LIMIT_RETRIES = 6;   // 429 backoff attempts: 2s,4s,8s,16s,32s,60s
 
     // Matches the first http(s) URI in a (possibly verbose) LLM answer.
     private static final java.util.regex.Pattern URI_PATTERN =
             java.util.regex.Pattern.compile("https?://\\S+");
-
-    // matcherName -> [inputTokens, outputTokens]
-    private static final ConcurrentHashMap<String, long[]>  TOKEN_REGISTRY = new ConcurrentHashMap<>();
-    // matcherName -> model name (for cost lookup)
-    private static final ConcurrentHashMap<String, String>  MODEL_REGISTRY = new ConcurrentHashMap<>();
 
     private final String         name;
     private final String         modelName;
@@ -57,190 +41,20 @@ public class LlmDecider {
         this.config      = new MatcherConfig();
     }
 
-    // Prices per 1M tokens in USD — update when model pricing changes
-    // LLM prices: input / output
-    // Embedding prices: input only (no output tokens)
-    private static final Map<String, double[]> MODEL_PRICES = Map.of(
-        "gpt-5-mini",                          new double[]{0.25,  2.00},
-        "text-embedding-ada-002",              new double[]{0.10,  0.00},
-        "text-embedding-3-large",              new double[]{0.13,  0.00},
-        "mistralai--mistral-medium-instruct",  new double[]{0.35,  1.80},
-        "nvidia--llama-3.2-nv-embedqa-1b",     new double[]{0.10,  0.00},
-        "mistralai--mistral-small-instruct",  new double[]{0.15,  0.60},
-        "mistralai--mistral-small",  new double[]{0.15,  0.60}
-
-
-    );
-
-    public static void resetRegistry() {
-        TOKEN_REGISTRY.clear();
-        MODEL_REGISTRY.clear();
-    }
-
-    public static void recordTokens(String key, String modelName, long input, long output) {
-        TOKEN_REGISTRY.merge(key, new long[]{input, output},
-                (a, b) -> new long[]{a[0] + b[0], a[1] + b[1]});
-        MODEL_REGISTRY.putIfAbsent(key, modelName);
-    }
-
-    private static double cost(long tokens, double pricePerMillion) {
-        return tokens / 1_000_000.0 * pricePerMillion;
-    }
-
-    // Returns CSV rows: matcher,model,input_tokens,output_tokens,total_tokens,cost_usd
-    public static List<String> getCsvRows() {
-        List<String> rows = new ArrayList<>();
-        for (var entry : TOKEN_REGISTRY.entrySet()) {
-            String key   = entry.getKey();
-            long   in    = entry.getValue()[0], out = entry.getValue()[1];
-            String model = MODEL_REGISTRY.getOrDefault(key, "unknown");
-            double[] prices = MODEL_PRICES.getOrDefault(model, new double[]{0.0, 0.0});
-            double rowCost  = cost(in, prices[0]) + cost(out, prices[1]);
-            rows.add(String.format("%s,%s,%d,%d,%d,%.6f", key, model, in, out, in + out, rowCost));
-        }
-        return rows;
-    }
-
-    public static void logSummary() {
-        if (TOKEN_REGISTRY.isEmpty()) return;
-        double totalCost = 0;
-        StringBuilder sb = new StringBuilder("\n=== Token Usage Summary ===\n");
-        sb.append(String.format("  %-80s  %-30s  %12s  %12s  %12s  %10s%n",
-                "Matcher", "Model", "input", "output", "total", "cost (USD)"));
-        sb.append("  " + "-".repeat(164) + "\n");
-
-        // per-model aggregation: model -> [llmIn, llmOut, embIn, cost]
-        Map<String, double[]> modelTotals = new LinkedHashMap<>();
-
-        for (var entry : TOKEN_REGISTRY.entrySet()) {
-            String key   = entry.getKey();
-            long   in    = entry.getValue()[0], out = entry.getValue()[1];
-            String model = MODEL_REGISTRY.getOrDefault(key, "unknown");
-            double[] prices = MODEL_PRICES.getOrDefault(model, new double[]{0.0, 0.0});
-            double rowCost  = cost(in, prices[0]) + cost(out, prices[1]);
-            totalCost += rowCost;
-
-            sb.append(String.format("  %-80s  %-30s  %12d  %12d  %12d  %10.4f%n",
-                    key, model, in, out, in + out, rowCost));
-
-            boolean isEmb = "embedding".equals(key);
-            modelTotals.computeIfAbsent(model, k -> new double[6]);
-            double[] mt = modelTotals.get(model);
-            if (isEmb) { mt[2] += in; }          // embIn
-            else       { mt[0] += in; mt[1] += out; } // llmIn, llmOut
-            mt[3] += rowCost;
-        }
-
-        sb.append("  " + "-".repeat(164) + "\n");
-
-        // totals per model
-        for (var mt : modelTotals.entrySet()) {
-            String model = mt.getKey();
-            double[] v   = mt.getValue();
-            long llmIn = (long) v[0], llmOut = (long) v[1], embIn = (long) v[2];
-            if (llmIn + llmOut > 0)
-                sb.append(String.format("  %-80s  %-30s  %12d  %12d  %12d  %10.4f%n",
-                        "LLM TOTAL [" + model + "]", model, llmIn, llmOut, llmIn + llmOut, v[3]));
-            if (embIn > 0)
-                sb.append(String.format("  %-80s  %-30s  %12d  %12s  %12d  %10.4f%n",
-                        "EMBEDDING TOTAL [" + model + "]", model, embIn, "-", embIn, v[3]));
-        }
-
-        sb.append(String.format("  %-80s  %-30s  %10.4f USD%n",
-                "COST TOTAL", "", totalCost));
-        LOG.info(sb.toString());
-    }
-
     private String callLlm(String prompt) {
         return callModel(prompt, modelName, name);
     }
 
     /**
-     * Single entry point for every LLM chat call: applies the client-side rate limit and
-     * retries on HTTP 429 with exponential backoff. Token usage is booked under {@code tokenKey}.
-     * Both the matching decider and the summary/dogtag generation route through here so the
-     * 429 handling can never drift apart between the two phases.
+     * Single entry point for every LLM chat call. Delegates to the locally hosted
+     * {@code /chat} endpoint via {@link LocalAiClient}. Both the matching decider and the
+     * summary/dogtag generation route through here so behavior can never drift apart
+     * between the two phases.
      */
     private static String callModel(String prompt, String modelName, String tokenKey) {
-        return withBackoff(() -> {
-            acquireRateLimit(modelName);
-            if (modelName.toLowerCase().contains("mistral")) {
-                var llmConfig = OrchestrationAiModel.MISTRAL_MEDIUM_INSTRUCT
-                        .withParam(OrchestrationAiModel.Parameter.TEMPERATURE, 0);
-                var config   = new OrchestrationModuleConfig().withLlmConfig(llmConfig);
-                var response = new OrchestrationClient()
-                        .chatCompletion(new OrchestrationPrompt(prompt), config);
-                var usage = response.getTokenUsage();
-                if (usage != null) {
-                    long in  = usage.getPromptTokens()    != null ? usage.getPromptTokens().longValue()    : 0;
-                    long out = usage.getCompletionTokens() != null ? usage.getCompletionTokens().longValue() : 0;
-                    recordTokens(tokenKey, modelName, in, out);
-                }
-                return response.getContent();
-            }
-            var openAiModel = new OpenAiModel(modelName, null);
-            var response = OpenAiClient.forModel(openAiModel)
-                    .chatCompletion(new OpenAiChatCompletionRequest(prompt).withTemperature(BigDecimal.ZERO));
-            var usage = response.getTokenUsage();
-            if (usage != null) {
-                long in = usage.getPromptTokens().longValue();
-                Integer outInt = usage.getCompletionTokens();
-                long out = outInt != null ? outInt.longValue() : 0;
-                recordTokens(tokenKey, modelName, in, out);
-            }
-            return response.getContent();
-        });
+        return LocalAiClient.chat(modelName, prompt);
     }
 
-    /** Blocks per model-specific rate limit; converts interruption into an unchecked error. */
-    private static void acquireRateLimit(String modelName) {
-        try {
-            ModelRateLimiter.acquire(modelName);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while waiting for rate-limit slot", e);
-        }
-    }
-
-    /** True if the throwable (or any cause) looks like an HTTP 429 rate-limit response. */
-    private static boolean isRateLimit(Throwable t) {
-        for (Throwable c = t; c != null; c = c.getCause()) {
-            String msg = c.getMessage();
-            if (msg != null && (msg.contains("429") || msg.toLowerCase(Locale.ROOT).contains("too many requests"))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Runs {@code call}, retrying on HTTP 429 with exponential backoff + jitter.
-     * Non-429 errors are rethrown immediately. After all retries are exhausted the
-     * last exception propagates so the caller's own retry/fail-open logic can act.
-     */
-    private static <T> T withBackoff(java.util.function.Supplier<T> call) {
-        long baseDelayMs = 2000;
-        for (int attempt = 0; ; attempt++) {
-            try {
-                return call.get();
-            } catch (RuntimeException e) {
-                if (!isRateLimit(e) || attempt >= RATE_LIMIT_RETRIES) throw e;
-                long backoff = baseDelayMs * (1L << attempt);              // 2s, 4s, 8s, 16s, ...
-                long jitter  = (long) (backoff * 0.25 * attempt % 500);    // deterministic, no Math.random
-                long sleep   = Math.min(backoff + jitter, 60_000);
-                // Only surface the warning once we're deep into retries (attempt index >= 4,
-                // i.e. the 5th try) — the early backoffs are routine and just noise in the log.
-                if (attempt >= 4)
-                    LOG.warning("Rate limited (429), backing off " + sleep + "ms (attempt " + (attempt + 1) + "/" + RATE_LIMIT_RETRIES + ")");
-                try {
-                    Thread.sleep(sleep);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw e;
-                }
-            }
-        }
-    }
 
     /** Returns list of [sourceUri, targetUri] pairs. */
     public List<String[]> decide11(
@@ -439,8 +253,8 @@ public class LlmDecider {
             String prompt = config.summarizationPromptTemplate.replace("{node_context}", contexts.get(uri));
             executor.submit(() -> {
                 try {
-                    // Routes through callModel → withBackoff, so a 429 retries with backoff
-                    // instead of silently falling back to the raw context below.
+                    // Routes through callModel → LocalAiClient, whose own retry logic handles
+                    // transient transport errors instead of silently falling back to raw context.
                     String content = callModel(prompt, modelName, "summarization");
                     summaries.put(uri, content);
                 } catch (Exception e) {

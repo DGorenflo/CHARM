@@ -1,6 +1,6 @@
 # CHARM – Ontology Matcher
 
-CHARM is a Java-based ontology matching service that finds correspondences between two ontologies. It exposes an asynchronous HTTP API: you submit a job and poll for the result.
+CHARM is a Java-based ontology matching service that finds correspondences between two ontologies. It exposes the standard MELT HTTP API: you `POST` two ontologies to `/match` and get the alignment back synchronously in the response.
 
 ## Prerequisites
 
@@ -8,7 +8,9 @@ CHARM is a Java-based ontology matching service that finds correspondences betwe
 - Maven 3.9.2+
 - Docker (optional, for containerized setup)
 
-For LLM-based matchers you also need access to a compatible AI endpoint (SAP AI Core / OpenAI-compatible).
+For LLM-based matchers you also need a **local AI server** running on the same machine that
+exposes the `/chat` and `/embed` endpoints described in [LLM_ENDPOINTS.md](LLM_ENDPOINTS.md).
+Point CHARM at it via the `LLM_BASE_URL` environment variable.
 
 ---
 
@@ -33,9 +35,11 @@ Available variables:
 | Variable | Default | Description |
 |---|---|---|
 | `MELT_PORT` | `8080` | Port the server listens on |
-| `MELT_MAX_REQUESTS` | `1` | Max parallel jobs (usually kept at 1 due to memory constraints) |
+| `MELT_MAX_REQUESTS` | `1` | Max parallel match requests (usually kept at 1 due to memory constraints) |
 | `MELT_LOCATION` | system temp | Directory for temporary upload files |
 | `LOGGING_LEVEL_ROOT` | `INFO` | Log level (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+| `LLM_BASE_URL` | `http://localhost:8000` | Base URL of the local AI server (see [LLM_ENDPOINTS.md](LLM_ENDPOINTS.md)) |
+| `LLM_API_KEY` | *(empty)* | Optional bearer token for the local AI server; sent as `Authorization: Bearer <key>` when set |
 
 ### 3. Start the container
 
@@ -43,7 +47,7 @@ Available variables:
 docker run --env-file .env -p 8080:8080 charm-matcher
 ```
 
-The server is ready when you see a log line like `Started server on port 8080`.
+The server is ready when you see a log line like `Matching service runs at: http://localhost:8080/match`.
 
 ---
 
@@ -72,55 +76,16 @@ java -Xmx8g -Djdk.xml.maxElementDepth=0 \
 
 ## API Usage
 
-The matcher always runs asynchronously. The flow is:
+The matcher uses the standard MELT `receiver-http` server: `POST /match` runs the matcher
+**synchronously** and returns the resulting alignment directly in the response body. There are no
+jobs and no polling.
 
-```
-POST /match  →  { jobId }
-     ↓
-GET /result/{jobId}   (poll until HTTP 200)
-     ↓
-GET /tokens/{jobId}   (optional: LLM token usage)
-```
-
-### Submit a job
+### Run a match
 
 ```bash
 curl -X POST http://localhost:8080/match \
   -F "source=@/path/to/source.owl" \
-  -F "target=@/path/to/target.owl"
+  -F "target=@/path/to/target.owl" \
+  -o alignment.rdf
 ```
 
-Response (HTTP 202):
-```json
-{ "jobId": "550e8400-e29b-41d4-a716-446655440000" }
-```
-
-You can also pass an existing alignment to refine (`-F "inputAlignment=@alignment.rdf"`) and matcher parameters (`-F "parameters=@params.txt"`).
-
-### Poll for the result
-
-```bash
-curl http://localhost:8080/result/{jobId}
-```
-
-| Status | Meaning |
-|---|---|
-| `202` | Job is still running |
-| `200` | Done – response body contains the alignment (RDF) |
-| `500` | Job failed – response body contains the error message |
-
-### Get token usage (optional)
-
-```bash
-curl http://localhost:8080/tokens/{jobId}
-```
-
-Returns a CSV with LLM token usage after the job has completed.
-
----
-
-## Notes
-
-- Only one matching job runs at a time. Additional requests are queued.
-- Temporary files are automatically deleted after the job finishes.
-- Ontology files must be in a format supported by Apache Jena (OWL, RDF/XML, Turtle, etc.).

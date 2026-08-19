@@ -60,7 +60,7 @@ public class CHARM_Matcher extends MeltMatcherWrapper {
                                        , new EquivalentAltLabelAndTwoSharedStatementsInstanceMatcher()
                                        , new EquivalentCrossLabelAndAltLabelAndTwoSharedStatementsInstanceMatcher()
                                        , new EquivalentCrossAltLabelAndLabelAndTwoSharedStatementsInstanceMatcher()
-                                       , new EquivalentLabelAndAltLabelAndOneSharedStatementInstanceMatcher()
+                                       , new VerifiedMatcher(new EquivalentLabelAndAltLabelAndOneSharedStatementInstanceMatcher(), VERIFY_MODEL, VERIFY_BATCH_SIZE, VERIFY_CONCURRENCY, VERIFY_CREATE_DOGTAGS)
                                        , new EquivalentLabelAndOneSharedStatementInstanceMatcher()
                                        , new VerifiedMatcher(new EquivalentAltLabelAndOneSharedStatementInstanceMatcher(), VERIFY_MODEL, VERIFY_BATCH_SIZE, VERIFY_CONCURRENCY, VERIFY_CREATE_DOGTAGS)
                                        , new VerifiedMatcher(new EquivalentCrossLabelAndAltLabelAndOneSharedStatementInstanceMatcher(), VERIFY_MODEL, VERIFY_BATCH_SIZE, VERIFY_CONCURRENCY, VERIFY_CREATE_DOGTAGS)
@@ -89,12 +89,6 @@ public class CHARM_Matcher extends MeltMatcherWrapper {
                                          , new VerifiedMatcher(new UniqueSharedStatementInstanceMatcher(), VERIFY_MODEL, VERIFY_BATCH_SIZE, VERIFY_CONCURRENCY, VERIFY_CREATE_DOGTAGS)
                                          , new VerifiedMatcher(new UniqueWordInAnyLiteralInstanceMatcher(), VERIFY_MODEL, VERIFY_BATCH_SIZE, VERIFY_CONCURRENCY, VERIFY_CREATE_DOGTAGS)
                                          , new VerifiedMatcher(new JaccardWordOverlapInstanceMatcher(), VERIFY_MODEL, VERIFY_BATCH_SIZE, VERIFY_CONCURRENCY, VERIFY_CREATE_DOGTAGS)
-
-                                        /*  , new LLMMatcher(LLM_DOGTAG_MODEL, LLM_MODEL, LLM_EMBEDDING_MODEL,
-                                            LLM_CONCURRENCY, LLM_MATCHING_CONCURRENCY, LLM_KNN, false,
-                                            List.of(0.96, 0.91, 0.87),
-                                            EnumSet.of(EntityType.INSTANCE)) */
-
                                 )
                         )
                         ,

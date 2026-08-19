@@ -1,12 +1,5 @@
 package charm.bootstrap.semantics.pipeline;
 
-import com.sap.ai.sdk.foundationmodels.openai.OpenAiClient;
-import com.sap.ai.sdk.foundationmodels.openai.OpenAiEmbeddingRequest;
-import com.sap.ai.sdk.foundationmodels.openai.OpenAiModel;
-import com.sap.ai.sdk.orchestration.OrchestrationClient;
-import com.sap.ai.sdk.orchestration.OrchestrationEmbeddingModel;
-import com.sap.ai.sdk.orchestration.OrchestrationEmbeddingRequest;
-
 import charm.bootstrap.semantics.model.DogTagConfig;
 import charm.bootstrap.semantics.model.EmbeddedDogTag;
 
@@ -64,41 +57,12 @@ public class DogTagEmbeddPipeline {
 
         int total = uris.size();
         Map<String, List<Float>> results = new LinkedHashMap<>();
-        boolean useOrchestration = embeddingModelName.toLowerCase().contains("nvidia")
-                || embeddingModelName.toLowerCase().contains("llama");
 
         for (int i = 0; i < total; i += config.embeddingBatchSize) {
             List<String> batchUris  = uris.subList(i, Math.min(i + config.embeddingBatchSize, total));
             List<String> batchTexts = textList.subList(i, Math.min(i + config.embeddingBatchSize, total));
 
-            List<float[]> vectors;
-            long promptTokens = 0;
-
-            ModelRateLimiter.acquire(embeddingModelName);
-            if (useOrchestration) {
-                var request  = OrchestrationEmbeddingRequest
-                        .forModel(OrchestrationEmbeddingModel.NVIDIA_LLAMA_32_NV_EMBEDQA_1B)
-                        .forInputs(batchTexts)
-                        .asDocument();
-                var response = new OrchestrationClient().embed(request);
-                vectors = response.getEmbeddingVectors();
-                var finalResult = response.getOriginalResponse().getFinalResult();
-                if (finalResult != null && finalResult.getUsage() != null) {
-                    Integer pt = finalResult.getUsage().getPromptTokens();
-                    if (pt != null) promptTokens = pt.longValue();
-                }
-            } else {
-                var openAiModel  = new OpenAiModel(embeddingModelName, null);
-                var embResponse  = OpenAiClient.forModel(openAiModel)
-                        .embedding(new OpenAiEmbeddingRequest(batchTexts));
-                vectors = embResponse.getEmbeddingVectors();
-                var embUsage = embResponse.getOriginalResponse().getUsage();
-                if (embUsage != null) {
-                    Integer pt = embUsage.getPromptTokens();
-                    if (pt != null) promptTokens = pt.longValue();
-                }
-            }
-            LlmDecider.recordTokens("embedding", embeddingModelName, promptTokens, 0);
+            List<float[]> vectors = LocalAiClient.embed(embeddingModelName, batchTexts);
 
             for (int j = 0; j < batchUris.size(); j++) {
                 float[] v = vectors.get(j);

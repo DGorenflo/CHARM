@@ -2,3 +2,9 @@ app/target/
 .env
 *.class
 *.jar
+
+tools/
+
+results/
+app/results/
+alignment.rdf
