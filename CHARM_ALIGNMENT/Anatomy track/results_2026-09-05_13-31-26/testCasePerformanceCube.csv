@@ -1,0 +1,5 @@
+Track,Track Version,Test Case,Matcher,Type,Precision (P),Recall (R),Residual Recall (R+),F1,"# of TP","# of FP","# of FN","# of Correspondences",Time,Time (HH:MM:SS)
+anatomy_track,anatomy_track-default,mouse-human-suite,AsyncMatcher,ALL,0.9066579634464752,0.9162269129287599,0.7816291161178509,0.9114173228346457,1389,143,127,1532,1442707555333,00:24:02
+anatomy_track,anatomy_track-default,mouse-human-suite,AsyncMatcher,CLASSES,0.9102228047182176,0.9162269129287599,0.7816291161178509,0.913214990138067,1389,137,127,1526,-,-
+anatomy_track,anatomy_track-default,mouse-human-suite,AsyncMatcher,PROPERTIES,0.0,0.0,0.0,0.0,0,6,0,6,-,-
+anatomy_track,anatomy_track-default,mouse-human-suite,AsyncMatcher,INSTANCES,0.0,0.0,0.0,0.0,0,0,0,0,-,-

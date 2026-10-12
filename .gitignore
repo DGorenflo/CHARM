@@ -8,3 +8,4 @@ tools/
 results/
 app/results/
 alignment.rdf
+app/dependency-reduced-pom.xml
